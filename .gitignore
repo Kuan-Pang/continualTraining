@@ -160,3 +160,4 @@ cython_debug/
 #.idea/
 save/
 wandb/
+notebooks/error-save/
