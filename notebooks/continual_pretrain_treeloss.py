@@ -17,6 +17,8 @@
 # %%
 # %%
 import copy
+import networkx as nx
+import obonet
 import gc
 import json
 import os
@@ -98,7 +100,51 @@ hyperparameter_defaults = dict(
     include_zero_gene = False,
     freeze = False, #freeze
     DSBN = False,  # Domain-spec batchnorm
+    lambda_reg = 0.5, # lambda for regularization
 )
+
+
+class TreeLoss(torch.nn.Module):
+    def __init__(self, lamda=0.5, lca_dist_dict = None, nodes = None):
+        super(TreeLoss, self).__init__()
+        self.ce = torch.nn.CrossEntropyLoss()
+        
+        # double check this mapping
+        # nodes ia id2type dict, idx is the index of the cell type, convert to np array
+        self.nodes = np.array(list(id2type.values()))
+        self.lamda = lamda
+            
+        assert lca_dist_dict is not None
+        
+        self.lca_dist_dict = lca_dist_dict
+
+
+    # pred: (N, C)
+    # target: (N, C)
+    def forward(self, pred, target):
+        ce_loss = self.ce(pred, target)
+        pred = pred.cpu().detach().numpy()
+        target = target.cpu().detach().numpy()
+        target_node_id = self.nodes[target]
+        pred_node_id = self.nodes[np.argmax(pred, axis=1)]
+        
+        # total distance
+        total_dist = 0
+        for i in range(len(target_node_id)):
+            total_dist += self.lca_dist(target_node_id[i], pred_node_id[i])
+            
+        # average distance
+        total_dist /= len(target_node_id)
+        
+        return ce_loss+ self.lamda * total_dist
+    
+    def lca_dist(self, node1, node2):
+        if node1 not in self.lca_dist_dict:
+            return 1
+        if node2 not in self.lca_dist_dict[node1]:
+            return 1
+        return self.lca_dist_dict[node1][node2]
+
 
 # %%
 run = wandb.init(
@@ -233,6 +279,11 @@ num_types = len(np.unique(celltype_id_labels))
 id2type = dict(enumerate(adata.obs["celltype"].astype("category").cat.categories))
 adata.obs["celltype_id"] = celltype_id_labels
 adata.var["gene_name"] = adata.var.index.tolist()
+
+
+lca_dist_dict = json.load(open("/home/pangkuan/dev/course_work/csc311/continualTraining/notebooks/lca_distances.json", "r"))
+treeloss = TreeLoss(lamda=config.lambda_reg, lca_dist_dict = lca_dist_dict, nodes = id2type)
+
 
 # %%
 if config.load_model is not None:
@@ -558,7 +609,7 @@ wandb.watch(model)
 
 # %%
 criterion = masked_mse_loss
-criterion_cls = nn.CrossEntropyLoss()
+criterion_cls = treeloss
 criterion_dab = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(
     model.parameters(), lr=lr, eps=1e-4 if config.amp else 1e-8
@@ -770,6 +821,10 @@ def train(model: nn.Module, loader: DataLoader) -> None:
             total_mvc_zero_log_prob = 0
             total_error = 0
             start_time = time.time()
+    
+    # save
+    torch.save(model.state_dict(), save_dir / f"model_{epoch:03d}.pt")
+
 
 
 def define_wandb_metrcis():
