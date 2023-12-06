@@ -142,7 +142,7 @@ class TreeLoss(torch.nn.Module):
         dist_array = torch.from_numpy(dist_array).to(pred.device)
         for i in range(len(pred_cpu)):
             # ce loss
-            weighted_ce[i] = self.lamda * self.ce(pred[i].unsqueeze(0), target[i].unsqueeze(0)) * dist_array[i]
+            weighted_ce[i] = self.ce(pred[i].unsqueeze(0), target[i].unsqueeze(0)) * dist_array[i]
             
         weighted_ce = torch.sum(weighted_ce)
         weighted_ce /= len(pred_cpu)
